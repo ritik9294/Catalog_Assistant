@@ -1,11 +1,11 @@
-import streamlit as st
-from st_copy_to_clipboard import st_copy_to_clipboard
+import streamlit as st # type: ignore
+from st_copy_to_clipboard import st_copy_to_clipboard # type: ignore
 import os
 import json
-from PIL import Image
-from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from PIL import Image # type: ignore
+from dotenv import load_dotenv # type: ignore
+from langchain_core.messages import HumanMessage # type: ignore
+from langchain_google_genai import ChatGoogleGenerativeAI # type: ignore
 import base64
 import warnings
 import io
@@ -95,22 +95,16 @@ def generate_b2b_catalog_images(product_name, specifications_list):
     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(st.session_state.image_bytes).decode('utf-8')}"}},])
     
     with st.spinner("🤖 Generating advanced A+ catalog images... (This may take a moment)"):
-        response = image_enhancer_llm.invoke([message])
+        generated_images = invoke_image_model_with_tracking(image_enhancer_llm, message)
 
     # Process the response, expecting two image files
-    if isinstance(response.content, list):
-        image_bytes_list = []
-        print(response.content)  # For debugging
-        for part in response.content:
-            if isinstance(part, dict) and part.get("type") == "image_url":
-                b64_data = part["image_url"]["url"].split(",")[1]
-                image_bytes_list.append(base64.b64decode(b64_data))
-        
-        if len(image_bytes_list) == 2:
-            return image_bytes_list
-    
-    st.warning("Advanced image generation failed to return two images. Proceeding with the main image only.")
-    return None
+    if generated_images and len(generated_images) == 2:
+        st.success("Advanced A+ images generated successfully!")
+        return generated_images
+    else:
+        # This is the original, robust error handling for when generation fails.
+        st.warning("Advanced image generation failed to return two images. Proceeding with the main image only.")
+        return None
 
 
 def render_product_listing(listing_data, image_bytes_list, image_mime_type):
@@ -220,8 +214,44 @@ def render_product_listing(listing_data, image_bytes_list, image_mime_type):
 
 def reset_session_state():
     """Resets the session state to start a new cataloging process."""
+    usage = st.session_state.get("usage_stats", {}) 
     st.session_state.clear()
+    st.session_state.usage_stats = usage
     st.session_state.step = "initial"
+
+def invoke_text_model_with_tracking(llm, message):
+    """Invokes a text model, tracks token usage, and returns the response content."""
+    result = llm.invoke([message])
+    print(result)
+    usage = result.usage_metadata
+    
+    st.session_state.usage_stats["text_input_tokens"] += usage.get("input_tokens", 0)
+    st.session_state.usage_stats["text_output_tokens"] += usage.get("output_tokens", 0)
+
+    return result.content
+
+
+def invoke_image_model_with_tracking(llm, message):
+    """Invokes an image model, tracks usage, and returns a list of image bytes."""
+    result = llm.invoke([message])
+    usage = result.usage_metadata
+
+    st.session_state.usage_stats["image_input_tokens"] += usage.get("input_tokens", 0)
+    st.session_state.usage_stats["image_output_tokens"] += usage.get("output_tokens", 0)
+
+    response_content = result.content
+    if isinstance(response_content, list):
+        image_bytes_list = []
+        for part in response_content:
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                b64_data = part["image_url"]["url"].split(",")[1]
+                image_bytes_list.append(base64.b64decode(b64_data))
+        
+        # Add the number of successfully generated images to the tracker
+        st.session_state.usage_stats["images_generated"] += len(image_bytes_list)
+        return image_bytes_list
+        
+    return None
 
 # --- Main Application Logic ---
 
@@ -261,6 +291,14 @@ if "all_final_listings" not in st.session_state:
     st.session_state.all_final_listings = []
 if "products_to_process" not in st.session_state:
     st.session_state.products_to_process = []
+if "usage_stats" not in st.session_state:
+    st.session_state.usage_stats = {
+        "text_input_tokens": 0,
+        "text_output_tokens": 0,
+        "image_input_tokens": 0,
+        "image_output_tokens": 0,
+        "images_generated": 0,
+    }
 
 
 # --- Step 0: Image Upload ---
@@ -317,6 +355,36 @@ if st.session_state.uploaded_image:
         if st.button("Start Over"):
             reset_session_state()
             st.rerun()
+        st.markdown("---")
+        with st.expander("📊 API Usage & Cost Estimate", expanded=True):
+            stats = st.session_state.usage_stats
+            
+            st.write(f"**Text Input Tokens:** `{stats['text_input_tokens']}`")
+            st.write(f"**Text Output Tokens:** `{stats['text_output_tokens']}`")
+            st.write(f"**Image Input Tokens:** `{stats['image_input_tokens']}`")
+            st.write(f"**Image Output Tokens:** `{stats['image_output_tokens']}`")
+            st.write(f"**Images Generated:** `{stats['images_generated']}`")
+
+            # Example pricing - replace with actuals if needed
+            # Prices are per 1,000 tokens or per image
+            text_input_cost = (stats['text_input_tokens'] *0.3)/1000000 
+            text_output_cost = (stats['text_output_tokens'] * 2.5) /1000000
+            image_prompt_cost = (stats['image_input_tokens']*0.30)/1000000 # Example price
+            image_gen_cost = (stats['image_output_tokens'] * 30)/1000000 # Example price
+            
+            total_cost = text_input_cost + text_output_cost + image_prompt_cost + image_gen_cost
+            
+            st.markdown("---")
+            st.metric(label="Estimated Total Cost", value=f"${total_cost:.4f} USD")
+            
+            if st.button("Reset Cost Tracker"):
+                st.session_state.usage_stats = {
+                    "text_input_tokens": 0, "text_output_tokens": 0,
+                    "image_prompt_tokens": 0, "images_generated": 0,
+                }
+                st.rerun()
+
+        st.caption("Costs are estimates based on sample pricing and may not be exact.")
 
 
 if st.session_state.step == "identify_products":
@@ -333,8 +401,8 @@ if st.session_state.step == "identify_products":
         message = HumanMessage(content=[{"type": "text", "text": prompt}, 
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(st.session_state.image_bytes).decode('utf-8')}"}},])
         
-        response = llm.invoke([message])
-        products = safe_json_parse(response.content)
+        response_content = invoke_text_model_with_tracking(llm, message)
+        products = safe_json_parse(response_content)
 
         if products and isinstance(products, list):
             if len(products) == 1:
@@ -435,12 +503,11 @@ if st.session_state.step == "extract_selected_product":
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(st.session_state.image_bytes).decode('utf-8')}"}},])
         
         # Use the powerful image generation model for this task
-        response = image_enhancer_llm.invoke([extraction_message])
+        extracted_images = invoke_image_model_with_tracking(image_enhancer_llm, extraction_message)
 
         # Process the response to get the new image data
-        if isinstance(response.content, list) and response.content[0].get("type") == "image_url":
-            b64_data = response.content[0]["image_url"]["url"].split(",")[1]
-            new_image_bytes = base64.b64decode(b64_data)
+        if extracted_images and len(extracted_images) >= 1:
+            new_image_bytes = extracted_images[0]
 
             st.session_state.image_bytes = new_image_bytes
             st.session_state.image_mime_type = "image/png" # Generated images are typically PNG
@@ -480,8 +547,8 @@ if st.session_state.step == "quality_check":
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(st.session_state.image_bytes).decode('utf-8')}"}},
             ]
         )
-        response = llm.invoke([message])
-        quality_results = safe_json_parse(response.content)
+        response_content = invoke_text_model_with_tracking(llm, message)
+        quality_results = safe_json_parse(response_content)
 
         if quality_results:
             issues = [key for key, value in quality_results.items() if value]
@@ -560,19 +627,11 @@ if st.session_state.step == "perform_enhancement":
         )
 
         # Invoke the powerful image generation model
-        response = image_enhancer_llm.invoke([enhancement_message],
-        generation_config=dict(response_modalities=["TEXT", "IMAGE"]),)
+        generated_images = invoke_image_model_with_tracking(image_enhancer_llm, enhancement_message)
         
-        if isinstance(response.content, list):
+        if generated_images and len(generated_images) >= 1:
             # Extract the raw base64 data
-            image_block = next(
-            block
-            for block in response.content
-            if isinstance(block, dict) and block.get("image_url")
-        )
-
-            b64_data = image_block["image_url"].get("url").split(",")[-1]
-            st.session_state.enhanced_image_bytes = base64.b64decode(b64_data)
+            st.session_state.enhanced_image_bytes = generated_images[0]
             st.session_state.step = "confirm_enhancement"
             st.rerun()
         else:
@@ -640,8 +699,8 @@ if st.session_state.step == "get_critical_attribute":
         message = HumanMessage(content=[{"type": "text", "text": prompt}, 
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(st.session_state.image_bytes).decode('utf-8')}"}},
         ])
-        response = llm.invoke([message])
-        question_data = safe_json_parse(response.content)
+        response_content = invoke_text_model_with_tracking(llm, message)
+        question_data = safe_json_parse(response_content)
 
         # NEW: Handle a list of questions or an empty list.
         if question_data and "questions" in question_data and question_data["questions"]:
@@ -710,8 +769,8 @@ if st.session_state.step == "generate_listing":
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(st.session_state.image_bytes).decode('utf-8')}"}},
             ]
         )
-        response = llm.invoke([message])
-        listing_data = safe_json_parse(response.content)
+        response_content = invoke_text_model_with_tracking(llm, message)
+        listing_data = safe_json_parse(response_content)
 
         if listing_data:
             st.session_state.final_listing = listing_data
@@ -748,7 +807,7 @@ if st.session_state.step == "generate_listing":
             st.rerun()
         else:
             st.error("Failed to generate the final listing. The model's response was not in the expected format. Please try again.")
-            st.write("Model Response:", response.content) # For debugging
+            st.write("Model Response:", response_content) # For debugging
 
 
 if st.session_state.step == "generate_additional_images":
@@ -848,4 +907,3 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
-
