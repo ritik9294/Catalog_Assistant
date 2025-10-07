@@ -20,21 +20,8 @@ if "GOOGLE_API_KEY" not in os.environ:
     st.error("Google API key not found. Please set it in a .env file.")
     st.stop()
 
-@st.cache_resource
-def get_text_model():
-    """Loads and caches the text/analysis model."""
-    print("--- Loading Text Model ---") # This will print in your logs only once
-    return ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0.3)
-
-@st.cache_resource
-def get_image_model():
-    """Loads and caches the image generation model."""
-    print("--- Loading Image Model ---") # This will print in your logs only once
-    return ChatGoogleGenerativeAI(model="gemini-2.5-flash-image-preview", temperature=0.5)
-# --- Helper Functions ---
-
-llm = get_text_model()
-image_enhancer_llm = get_image_model()
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3)
+image_enhancer_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-image-preview", temperature=0.5)
 
 def safe_json_parse(json_string):
     """Safely parses a JSON string, returning None on failure."""
@@ -919,5 +906,6 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
+
 
 
