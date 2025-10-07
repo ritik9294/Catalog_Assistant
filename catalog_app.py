@@ -33,6 +33,9 @@ def get_image_model():
     return ChatGoogleGenerativeAI(model="gemini-2.5-flash-image-preview", temperature=0.5)
 # --- Helper Functions ---
 
+llm = get_text_model()
+image_enhancer_llm = get_image_model()
+
 def safe_json_parse(json_string):
     """Safely parses a JSON string, returning None on failure."""
     try:
@@ -916,4 +919,5 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
+
 
