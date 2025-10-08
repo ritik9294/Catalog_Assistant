@@ -10,7 +10,6 @@ import base64
 import warnings
 import io
 import zipfile
-import fitz
 
 warnings.filterwarnings("ignore")
 
@@ -1132,3 +1131,4 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
+
