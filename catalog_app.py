@@ -10,6 +10,7 @@ import base64
 import warnings
 import io
 import zipfile
+import fitz
 
 warnings.filterwarnings("ignore")
 
@@ -516,11 +517,8 @@ if st.session_state.step == "confirm_product":
             st.write("**Select Products:**")
             # --- THE FIX: The 'product' variable is now a dictionary ---
             for product_data in st.session_state.identified_products:
-                # First, get the product name string from the dictionary.
                 product_name = product_data.get("product_name", "Unknown Product")
                 
-                # Now, use the product_name string for the label and the key.
-                # The key for the 'selections' dictionary is the full product_data object.
                 selections[product_name] = st.checkbox(
                     product_name.title(), 
                     value=True, 
@@ -555,21 +553,27 @@ if st.session_state.step == "confirm_product":
                     st.session_state.create_all_flow = True
                     st.session_state.processing_index = 0
                     st.session_state.all_final_listings = []
-                    st.session_state.step = "process_next_batch_item"
+                    st.session_state.step = "extract_selected_product"
                     st.rerun()
 
 
 if st.session_state.step == "extract_selected_product":
 
     if st.session_state.create_all_flow:
+        # If in a batch, reset the source image to the original multi-product one.
         st.session_state.image_bytes = st.session_state.original_image_bytes
         st.session_state.image_mime_type = st.session_state.original_image_mime_type
+        
+        # Get the data for the current item from our list.
+        current_item_data = st.session_state.products_to_process[st.session_state.processing_index]
+        
+        # Set the state (name, brand, etc.) for this specific item.
+        st.session_state.selected_product = current_item_data.get("product_name")
+        st.session_state.is_branded_flow = current_item_data.get("is_branded")
+        st.session_state.brand_name = current_item_data.get("brand_name")
 
-    if st.session_state.create_all_flow:
-        product_name = st.session_state.products_to_process[st.session_state.processing_index]
-        st.session_state.selected_product = product_name
-    else:
-        product_name = st.session_state.selected_product
+    # The rest of the function proceeds as normal, now using the correct context.
+    product_name = st.session_state.selected_product
     
     with st.spinner(f"Isolating '{st.session_state.selected_product}' from the image... This may take a moment."):
         
@@ -1079,8 +1083,6 @@ if st.session_state.step == "confirm_single_product_creation":
     current_index = st.session_state.processing_index
     total_products = len(st.session_state.products_to_process)
     product_name = st.session_state.products_to_process[current_index]
-
-    st.success(f"## ✅ Product {current_index + 1}/{total_products} ({product_name}) Generated!")
     
     render_product_listing(
         st.session_state.final_listing, 
@@ -1131,4 +1133,3 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
-
