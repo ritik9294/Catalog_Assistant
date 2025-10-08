@@ -10,6 +10,7 @@ import base64
 import warnings
 import io
 import zipfile
+import fitz
 
 warnings.filterwarnings("ignore")
 
@@ -22,6 +23,7 @@ if "GOOGLE_API_KEY" not in os.environ:
 
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3)
 image_enhancer_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-image-preview", temperature=0.5)
+# --- Helper Functions ---
 
 def safe_json_parse(json_string):
     """Safely parses a JSON string, returning None on failure."""
@@ -67,6 +69,37 @@ No humans or body parts visible.
 Output:
 Provide 2 unique image files.
 Both images must be consistent with the uploaded reference image, product name, and key specifications.
+"""
+
+SKU_QUESTION_GENERATION_PROMPT = """
+You are an expert product specialist for the brand "{brand_name}".
+Your goal is to identify the exact product SKU shown in the provided image.
+
+1.  **Analyze and Infer:** Analyze the image of the {product_name}. Infer all specifications you can determine visually (e.g., color, basic shape, visible features).
+2.  **Identify Ambiguities:** Based on your knowledge of {brand_name}'s product line, identify 0 to 5 critical, ambiguous specifications that are needed to differentiate this product from other similar models.
+3.  **Generate Questions with Options:** For each ambiguous spec, formulate a question and provide 4 plausible multiple-choice options. These options should be realistic for {brand_name} products. The 5th question can optionally be for the Model Number if it's a key differentiator.
+
+Return a JSON object with a single key "questions". The value should be a list of question objects.
+- If no questions are needed, return an empty list: {{"questions": []}}
+- Each question object must have three keys: "spec_name" (a short attribute name), "description" (the full question), and "options" (a list of 4 strings).
+
+**Example Output:**
+{{
+  "questions": [
+    {{
+      "spec_name": "Capacity",
+      "description": "Spec 1 (What is the battery's Ampere-hour capacity?)",
+      "options": ["45Ah", "55Ah", "65Ah", "75Ah"]
+    }},
+    {{
+      "spec_name": "Terminal Type",
+      "description": "Spec 2 (What is the terminal layout?)",
+      "options": ["Left Hand", "Right Hand", "Center Post", "Side Post"]
+    }}
+  ]
+}}
+
+Provide only the JSON response.
 """
 
 ### Part 2: The Code Implementation
@@ -290,6 +323,8 @@ if "all_final_listings" not in st.session_state:
     st.session_state.all_final_listings = []
 if "products_to_process" not in st.session_state:
     st.session_state.products_to_process = []
+if "pre_extracted_images" not in st.session_state:
+    st.session_state.pre_extracted_images = {}
 if "usage_stats" not in st.session_state:
     st.session_state.usage_stats = {
         "text_input_tokens": 0,
@@ -298,6 +333,14 @@ if "usage_stats" not in st.session_state:
         "image_output_tokens": 0,
         "images_generated": 0,
     }
+if "customization_details" not in st.session_state:
+    st.session_state.customization_details = None
+if "is_branded_flow" not in st.session_state:
+    st.session_state.is_branded_flow = False
+if "brand_name" not in st.session_state:
+    st.session_state.brand_name = None
+if "sku_questions" not in st.session_state:
+    st.session_state.sku_questions = []
 
 
 # --- Step 0: Image Upload ---
@@ -311,7 +354,7 @@ if st.session_state.step == "initial":
         # This is the existing file uploader
         uploaded_file = st.file_uploader(
             "Choose an image file from your device...", 
-            type=["jpg", "jpeg", "png"]
+            type=["jpg", "jpeg", "png","webp","bmp","tiff"]
         )
 
     with tab2:
@@ -389,34 +432,63 @@ if st.session_state.uploaded_image:
 if st.session_state.step == "identify_products":
     with st.spinner("Step 1: Identifying products in the image..."):
         prompt = """
-        Analyze the provided image carefully and identify all distinct, primary products visible. There shouldn't be any duplicates or variations of the same product.
-        Don't leave anything out, even if the product is partially obscured or in the background.
-        List them as a simple JSON array of strings. Example: ["weighing scale", "lump of coal"].
-        If only one product is clearly the main subject, return an array with a single item.
-        If no clear product is visible, return an empty array.
-        Provide only the JSON response.
-        """
+            Analyze the provided image carefully and identify all distinct, primary products clearly visible. There shouldn't be any duplicates or variations of the same product.
+            Don't leave anything out, even if the product is partially obscured or in the background.
+
+            For each product, you must determine if a recognizable brand is clearly visible.
+            
+
+            **CRITICAL RULES FOR BRAND IDENTIFICATION:**
+            1.  **High Confidence Only:** Only identify a brand if the name or logo belongs to a **well-known, publicly recognized commercial brand**.
+            2.  **No Ambiguity:** Do not identify generic text (e.g., "Made in China", "Heavy Duty", "12V") or unclear logos as a brand.
+            3.  **Default to Non-Branded:** If you are not highly confident, you MUST classify the product as non-branded.
+
+            Return the result as a JSON array of objects. Each object must have three keys:
+            1. "product_name": A generic name for the product (e.g., "Car Battery", "Floor Lamp").
+            2. "is_branded": A boolean (true/false), based on the critical rules above.
+            3. "brand_name": The identified brand name as a string, or null if non-branded.
+
+            Example for a clear, well-known brand:
+            [{"product_name": "Automotive Battery", "is_branded": true, "brand_name": "Exide"}]
+
+            Example for a generic or unbranded product:
+            [{"product_name": "Tripod Floor Lamp", "is_branded": false, "brand_name": null}]
+
+            Example for ambiguous text that should NOT be a brand:
+            [{"product_name": "Power Inverter", "is_branded": false, "brand_name": null}]
+
+            If only one product is clearly the main subject, return an array with a single item.
+            If no clear product is visible, return an empty array.
+            Provide only the JSON response.
+            """
 
         message = HumanMessage(content=[{"type": "text", "text": prompt}, 
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(st.session_state.image_bytes).decode('utf-8')}"}},])
         
         response_content = invoke_text_model_with_tracking(llm, message)
-        products = safe_json_parse(response_content)
+        products_data = safe_json_parse(response_content)
 
-        if products and isinstance(products, list):
-            if len(products) == 1:
-                # Only one product, proceed directly to quality check
-                st.session_state.selected_product = products[0]
-                st.success(f"Product identified: **{st.session_state.selected_product}**")
-                st.session_state.step = "quality_check" 
+        if products_data and isinstance(products_data, list) and len(products_data) > 0:
+            if len(products_data) == 1:
+                product = products_data[0]
+                st.session_state.selected_product = product["product_name"]
+                st.session_state.is_branded_flow = product["is_branded"]
+                st.session_state.brand_name = product["brand_name"]
+                
+                # --- NEW: Workflow Routing ---
+                if st.session_state.is_branded_flow:
+                    st.success(f"Branded product identified: **{st.session_state.brand_name} {st.session_state.selected_product}**")
+                    st.session_state.step = "ask_branded_sku_questions"
+                else:
+                    st.success(f"Product identified: **{st.session_state.selected_product}**")
+                    st.session_state.step = "get_critical_attribute" # The original non-branded flow
                 st.rerun()
-            elif len(products) > 1:
-                # Multiple products, user must choose one
-                st.session_state.identified_products = products
-                st.session_state.step = "confirm_product" 
+            elif len(products_data) > 1:
+                # If multiple products, we still go to the confirmation step
+                st.session_state.identified_products = products_data # Store the full data
+                st.session_state.step = "confirm_product"
                 st.rerun()
             else:
-                # No products found, go to a failure state
                 st.session_state.step = "product_not_found_fail"
                 st.rerun()
         else:
@@ -430,40 +502,61 @@ if st.session_state.step == "confirm_product":
     st.write("Multiple items were detected. Please select the products you wish to process.")
     
     if "identified_products" in st.session_state:
-        
-        # --- NEW: Create a dictionary to hold the state of each checkbox ---
         selections = {}
+
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("Deselect All", use_container_width=True):
+                # Set the value for each checkbox key in the session state to False
+                for product_data in st.session_state.identified_products:
+                    product_name = product_data.get("product_name", "")
+                    st.session_state[f"check_{product_name}"] = False
+                st.rerun()
+
         with st.container(border=True):
             st.write("**Select Products:**")
-            for product in st.session_state.identified_products:
-                # Create a checkbox for each product, defaulting to True (selected)
-                selections[product] = st.checkbox(product.title(), value=True, key=f"check_{product}")
+            # --- THE FIX: The 'product' variable is now a dictionary ---
+            for product_data in st.session_state.identified_products:
+                # First, get the product name string from the dictionary.
+                product_name = product_data.get("product_name", "Unknown Product")
+                
+                # Now, use the product_name string for the label and the key.
+                # The key for the 'selections' dictionary is the full product_data object.
+                selections[product_name] = st.checkbox(
+                    product_name.title(), 
+                    value=True, 
+                    key=f"check_{product_name}"
+                )
 
         st.write("") # Add some space
 
-        # --- NEW: A single button to process the selection ---
         if st.button("🚀 Process Selected Products", use_container_width=True, type="primary"):
-            # Create a list of products where the checkbox is ticked
-            products_to_create = [product for product, is_selected in selections.items() if is_selected]
-
-            print(products_to_create)
+            # Find the full data for each product where the checkbox is ticked.
+            products_to_create = [
+                prod_data for prod_data in st.session_state.identified_products 
+                if selections.get(prod_data.get("product_name"))
+            ]
 
             if not products_to_create:
                 st.warning("Please select at least one product to process.")
             else:
-                # If only one product is selected, it's a single flow
                 if len(products_to_create) == 1:
+                    # Single product flow
+                    selected_data = products_to_create[0]
                     st.session_state.create_all_flow = False
-                    st.session_state.selected_product = products_to_create[0]
-                    st.session_state.step = "extract_selected_product"
+                    st.session_state.selected_product = selected_data.get("product_name")
+                    st.session_state.is_branded_flow = selected_data.get("is_branded")
+                    st.session_state.brand_name = selected_data.get("brand_name")
+                    st.session_state.step = "extract_selected_product" # Always extract
                     st.rerun()
-                # If multiple products are selected, it's a batch flow
+                    
                 else:
+                    # Batch processing flow
                     st.session_state.products_to_process = products_to_create
                     st.session_state.create_all_flow = True
                     st.session_state.processing_index = 0
                     st.session_state.all_final_listings = []
-                    st.session_state.step = "extract_selected_product"
+                    st.session_state.step = "process_next_batch_item"
                     st.rerun()
 
 
@@ -553,7 +646,12 @@ if st.session_state.step == "quality_check":
             issues = [key for key, value in quality_results.items() if value]
             if not issues:
                 st.success("Image quality check passed!")
-                st.session_state.step = "get_critical_attribute"
+
+                if st.session_state.get("is_branded_flow"):
+                    st.session_state.step = "ask_branded_sku_questions"
+
+                else:
+                    st.session_state.step = "get_critical_attribute"
                 st.rerun()
             else:
                 st.session_state.quality_issues_list = issues # Store the list of issue keys
@@ -654,10 +752,12 @@ if st.session_state.step == "confirm_enhancement":
 
     colA, colB = st.columns(2)
     if colA.button("👍 Use Enhanced Image", use_container_width=True, type="primary"):
-        # CRITICAL: Replace the original image data with the new, enhanced data
         st.session_state.image_bytes = st.session_state.enhanced_image_bytes
         st.session_state.image_mime_type = "image/png" # Generated images are typically PNG
-        st.session_state.step = "identify_product"
+        if st.session_state.get("is_branded_flow"):
+            st.session_state.step = "ask_branded_sku_questions"
+        else:
+            st.session_state.step = "get_critical_attribute"
         st.success("Great! Proceeding with the clean image...")
         st.rerun()
 
@@ -713,6 +813,8 @@ if st.session_state.step == "get_critical_attribute":
             st.session_state.step = "generate_listing"
             st.rerun()
 
+
+
 if st.session_state.step == "ask_user":
     st.subheader("Prompt:")
     st.write("Please provide the following critical attributes for an accurate listing:")
@@ -737,20 +839,147 @@ if st.session_state.step == "ask_user":
                     formatted_answers.append(f"{attribute_name.title()}: {answer}")
 
                 st.session_state.critical_attribute = ", ".join(formatted_answers)
-                st.session_state.step = "generate_listing"
+                st.session_state.step = "ask_customization_yes_no"
                 st.rerun()
             else:
                 st.warning("Please answer all questions.")
 
+if st.session_state.step == "ask_branded_sku_questions":
+    with st.spinner(f"Analyzing {st.session_state.brand_name} product to identify key specifications..."):
+        prompt = SKU_QUESTION_GENERATION_PROMPT.format(
+            brand_name=st.session_state.brand_name,
+            product_name=st.session_state.selected_product
+        )
+        message = HumanMessage(content=[{"type": "text", "text": prompt}, 
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(st.session_state.image_bytes).decode('utf-8')}"}},])
+        response_content = invoke_text_model_with_tracking(llm, message)
+        question_data = safe_json_parse(response_content)
+
+        if question_data and "questions" in question_data and question_data["questions"]:
+            st.session_state.sku_questions = question_data["questions"]
+            st.session_state.step = "collect_branded_sku_answers"
+            st.rerun()
+        else:
+            # If AI determines no questions are needed, we can skip straight to customization
+            st.warning("AI determined all critical specifications are visible. Proceeding.")
+            st.session_state.critical_attribute = "All specifications inferred from image."
+            st.session_state.step = "ask_customization_yes_no"
+            st.rerun()
+
+# --- NEW STEP 2A.2: Collect Branded SKU Answers from User ---
+if st.session_state.step == "collect_branded_sku_answers":
+    st.subheader(f"Help Identify the Exact {st.session_state.brand_name} SKU")
+    st.write("Please provide the values for the following critical specifications:")
+
+    user_answers = {}
+    for i, q in enumerate(st.session_state.sku_questions):
+        st.markdown(f"**{q['description']}**")
+        options = q['options'] + ["Other (enter manually)"]
+
+        radio_key = f"radio_{i}"
+        text_key = f"text_{i}"
+
+        # Make radio interactive (reruns on change)
+        radio_choice = st.radio("", options, key=radio_key, label_visibility="collapsed")
+
+        # Show text_input only when Other is selected
+        other_text_value = ""
+        if radio_choice == "Other (enter manually)":
+            other_text_value = st.text_input(
+                "Please specify:",
+                key=text_key,
+                placeholder="Enter your custom value"
+            )
+        else:
+            # Clear stale other text if the user changed selection away from Other
+            if text_key in st.session_state:
+                st.session_state[text_key] = ""
+
+        user_answers[q['spec_name']] = {
+            "choice": st.session_state.get(radio_key),
+            "other_value": st.session_state.get(text_key, "").strip()
+        }
+
+    if st.button("Submit Specifications"):
+        formatted_answers = []
+        all_answered = True
+        for spec_name, answer_data in user_answers.items():
+            choice = answer_data["choice"]
+            other_value = answer_data["other_value"]
+            if choice == "Other (enter manually)":
+                if other_value:
+                    formatted_answers.append(f"{spec_name}: {other_value}")
+                else:
+                    all_answered = False
+            else:
+                formatted_answers.append(f"{spec_name}: {choice}")
+
+        if all_answered:
+            st.session_state.critical_attribute = ", ".join(formatted_answers)
+            st.session_state.step = "ask_customization_yes_no"
+            st.rerun()
+        else:
+            st.warning("Please provide an answer for all specifications, including any 'Other' fields you have selected.")
+
+
+
+if st.session_state.step == "ask_customization_yes_no":
+    st.subheader("Customization / Upgradation")
+    st.write("Do you provide any customization or upgradation for this product?")
+
+    col1, col2, col3 = st.columns([1, 1, 2]) # Give some space
+
+    if col1.button("✅ Yes, I do", use_container_width=True):
+        st.session_state.step = "ask_customization_details"
+        st.rerun()
+
+    if col2.button("❌ No", use_container_width=True):
+        st.session_state.customization_details = None # Ensure it's cleared
+        st.session_state.step = "generate_listing" # Skip the details step
+        st.rerun()
+
+# --- NEW STEP 3.2: Get Customization Details ---
+if st.session_state.step == "ask_customization_details":
+    st.subheader("Customization Details")
+    with st.form("customization_form"):
+        # Use st.text_area for potentially longer, multi-line input
+        user_input = st.text_area(
+            "What kind of customization or upgradation have you done?",
+            placeholder="e.g., Custom logo branding, specific color options, increased power capacity..."
+        )
+        submitted = st.form_submit_button("Submit Details")
+        if submitted and user_input:
+            st.session_state.customization_details = user_input
+            st.session_state.step = "generate_listing" # Proceed to final generation
+            st.rerun()
+        elif submitted and not user_input:
+            st.warning("Please describe the customization.")
+
 
 # --- Steps 4, 5, 6: Final Listing Generation ---
 if st.session_state.step == "generate_listing":
-    with st.spinner("Final Step: Generating complete product listing..."):
+    with st.spinner("Generating product name, specs, and description..."):
+        
+        customization_prompt_injection = ""
+        if st.session_state.get("customization_details"):
+            customization_info = st.session_state.customization_details
+            customization_prompt_injection = f"""
+            IMPORTANT CUSTOMIZATION NOTE: The user provides customization for this product. You MUST incorporate the following details:
+            - In the 'specifications' list, add a new attribute exactly like this: {{"attribute": "Customisable / Value Addition", "value": "{customization_info}"}}.
+            - At the very end of the 'description', you MUST append this exact sentence: "This product can also be customized or upgraded: {customization_info}."
+            """
+        
+        brand_context = ""
+        if st.session_state.get("is_branded_flow") and st.session_state.get("brand_name"):
+            brand_context = f"- Brand: {st.session_state.brand_name}"
+
+
         final_prompt = f"""
         You are an expert B2B product cataloguer. Using the provided image and the following information, generate a complete product listing.
 
-        - Confirmed Product: {st.session_state.selected_product}
+        - Confirmed Product: {st.session_state.selected_product} {brand_context}
         - User-Provided Specification: {st.session_state.critical_attribute}
+        - {customization_prompt_injection}
 
         Generate the output as a single JSON object with these exact keys: "product_name", "specifications", "primary_keyword", "description".
 
@@ -774,7 +1003,6 @@ if st.session_state.step == "generate_listing":
         if listing_data:
             st.session_state.final_listing = listing_data
             
-            # --- NEW: Decide the next step based on the workflow ---
             product_name = listing_data.get("product_name")
             specs = listing_data.get("specifications")
             new_images = generate_b2b_catalog_images(product_name, specs)
@@ -838,10 +1066,8 @@ if st.session_state.step == "generate_additional_images":
         total_products = len(st.session_state.products_to_process)
 
         if (current_index + 1) < total_products:
-            # If there are MORE products left, go to the intermediate confirmation page.
             st.session_state.step = "confirm_single_product_creation"
         else:
-            # If this was the LAST product, skip the confirmation and go directly to the final summary page.
             st.session_state.step = "display_all_results"
     else:
         # If we are in a single product flow, go to the single display page.
@@ -906,6 +1132,3 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
-
-
-
