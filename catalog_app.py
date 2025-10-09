@@ -968,7 +968,7 @@ if st.session_state.step == "generate_listing":
             customization_prompt_injection = f"""
             IMPORTANT CUSTOMIZATION NOTE: The user provides customization for this product. You MUST incorporate the following details:
             - In the 'specifications' list, add a new attribute exactly like this: {{"attribute": "Customisable / Value Addition", "value": "{customization_info}"}}.
-            - At the very end of the 'description', you MUST append this exact sentence after correcting any spelling/ grammatical mistake from user: "This product can also be customized or upgraded: {customization_info}."
+            - At the very end of the 'description', you MUST append this sentence after correcting any spelling/ grammatical mistake from user: "This product can also be customized or upgraded: {customization_info}."
             """
         
         brand_context = ""
@@ -1132,5 +1132,6 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
+
 
 
