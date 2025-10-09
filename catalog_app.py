@@ -477,10 +477,10 @@ if st.session_state.step == "identify_products":
                 # --- NEW: Workflow Routing ---
                 if st.session_state.is_branded_flow:
                     st.success(f"Branded product identified: **{st.session_state.brand_name} {st.session_state.selected_product}**")
-                    st.session_state.step = "ask_branded_sku_questions"
+                    st.session_state.step = "quality_check"
                 else:
                     st.success(f"Product identified: **{st.session_state.selected_product}**")
-                    st.session_state.step = "get_critical_attribute" # The original non-branded flow
+                    st.session_state.step = "quality_check" # The original non-branded flow
                 st.rerun()
             elif len(products_data) > 1:
                 # If multiple products, we still go to the confirmation step
@@ -1132,6 +1132,7 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
+
 
 
 
