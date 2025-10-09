@@ -11,6 +11,7 @@ import warnings
 import io
 import zipfile
 
+
 warnings.filterwarnings("ignore")
 
 
@@ -432,7 +433,7 @@ if st.session_state.step == "identify_products":
     with st.spinner("Step 1: Identifying products in the image..."):
         prompt = """
             Analyze the provided image carefully and identify all distinct, primary products clearly visible. There shouldn't be any duplicates or variations of the same product.
-            Don't leave anything out, even if the product is partially obscured or in the background.
+            Don't leave anything out, only if the product is completely visible and present in the image.
 
             For each product, you must determine if a recognizable brand is clearly visible.
             
@@ -477,7 +478,7 @@ if st.session_state.step == "identify_products":
                 # --- NEW: Workflow Routing ---
                 if st.session_state.is_branded_flow:
                     st.success(f"Branded product identified: **{st.session_state.brand_name} {st.session_state.selected_product}**")
-                    st.session_state.step = "quality_check"
+                    st.session_state.step = "quality_check" # Skip to quality check for branded items
                 else:
                     st.success(f"Product identified: **{st.session_state.selected_product}**")
                     st.session_state.step = "quality_check" # The original non-branded flow
@@ -610,6 +611,7 @@ if st.session_state.step == "extract_selected_product":
             st.success(f"Successfully isolated the {product_name}.")
             st.session_state.step = "quality_check"
             st.rerun()
+
         else:
             st.error("AI image extraction failed. The model did not return a valid image.")
             st.warning("You can proceed with the original multi-product image or start over.")
@@ -625,6 +627,26 @@ if st.session_state.step == "extract_selected_product":
 
 # --- Step 1: Image Quality Check ---
 if st.session_state.step == "quality_check":
+
+    local_issues = []
+    min_dimension = 450
+    min_dimension = 450
+    try:
+        image = Image.open(io.BytesIO(st.session_state.image_bytes))
+        width, height = image.size
+        
+        if width < min_dimension or height < min_dimension:
+            st.warning(f"Image resolution is low ({width}x{height}). Minimum recommended is {min_dimension}x{min_dimension}.")
+            st.session_state.quality_issues_list = ["low_resolution"]
+            st.session_state.step = "offer_enhancement"
+            st.rerun() 
+            
+    except Exception as e:
+        st.error(f"Could not read image dimensions: {e}")
+        st.session_state.quality_issues = "Could not read image file for quality check."
+        st.session_state.step = "quality_fail"
+        st.rerun()
+
     with st.spinner("Step 1: Performing Image Quality Check..."):
         prompt = """
         You are an image quality inspector. Analyze the provided image based on these criteria and respond with a JSON object.
@@ -656,14 +678,12 @@ if st.session_state.step == "quality_check":
                     st.session_state.step = "get_critical_attribute"
                 st.rerun()
             else:
-                st.session_state.quality_issues_list = issues # Store the list of issue keys
+                st.session_state.quality_issues_list = issues 
                 enhanceable_issues = {"is_blurry", "watermark_present", "background_cluttered"}
                 
-                # Check if any of the detected issues are ones we can try to fix
                 if any(issue in enhanceable_issues for issue in issues):
                     st.session_state.step = "offer_enhancement"
                 else:
-                    # For non-fixable issues, go to the hard failure page
                     st.session_state.quality_issues = ", ".join(issues).replace('_', ' ')
                     st.session_state.step = "quality_fail"
                 st.rerun()
@@ -696,8 +716,9 @@ if st.session_state.step == "perform_enhancement":
         flaw_instructions_map = {
             "is_blurry": "The image is blurry; regenerate it with sharp focus and clear details.",
             "watermark_present": "A watermark or logo is present; remove it completely, intelligently filling in the area.",
-            "background_cluttered": "The background is cluttered; replace it with a clean, solid light gray (#f0f0f0) background."
-        }
+            "background_cluttered": "The background is cluttered; replace it with a clean, solid light gray (#f0f0f0) background.",
+            "low_resolution": "The image resolution is low; regenerate it as a high-resolution image (e.g., 1024x1024) with sharp, clear details."
+            }
         
         instructions = [flaw_instructions_map[issue] for issue in st.session_state.quality_issues_list if issue in flaw_instructions_map]
         instruction_str = " ".join(instructions)
@@ -967,8 +988,8 @@ if st.session_state.step == "generate_listing":
             customization_info = st.session_state.customization_details
             customization_prompt_injection = f"""
             IMPORTANT CUSTOMIZATION NOTE: The user provides customization for this product. You MUST incorporate the following details:
-            - In the 'specifications' list, add a new attribute exactly like this after correcting any spelling/grammatical errors from user along with first letter of the sentence as capital: {{"attribute": "Customisable / Value Addition", "value": "{customization_info}"}}.
-            - At the very end of the 'description', you MUST append this sentence after correcting any spelling/ grammatical mistake from user along with first letter of the sentence as capital: "This product can also be customized or upgraded: {customization_info}."
+            - In the 'specifications' list, add a new attribute exactly like this after correcting any spelling/grammatical errors from user: {{"attribute": "Customisable / Value Addition", "value": "{customization_info}"}}.
+            - At the very end of the 'description', you MUST append this exact sentence after correcting any spelling/ grammatical mistake from user: "This product can also be customized or upgraded: {customization_info}."
             """
         
         brand_context = ""
@@ -1132,9 +1153,3 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
-
-
-
-
-
-
