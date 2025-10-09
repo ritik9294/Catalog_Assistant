@@ -434,6 +434,7 @@ if st.session_state.step == "identify_products":
         prompt = """
             Analyze the provided image carefully and identify all distinct, primary products clearly visible. There shouldn't be any duplicates or variations of the same product.
             Don't leave anything out, only if the product is completely visible and present in the image.
+            If same Multiple products are present treat them as single product and return one entry.
 
             For each product, you must determine if a recognizable brand is clearly visible.
             
@@ -1153,3 +1154,4 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
+
