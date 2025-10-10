@@ -139,87 +139,209 @@ def generate_b2b_catalog_images(product_name, specifications_list):
         return None
 
 
-def render_product_listing(listing_data, image_bytes_list, image_mime_type):
-    """
-    Renders a single product listing in the standard catalog format.
-    This function includes the final UI layout and copy/download features.
+# def render_product_listing(product_id,listing_data, image_bytes_list, image_mime_type):
+#     """
+#     Renders a single product listing in the standard catalog format.
+#     This function includes the final UI layout and copy/download features.
 
-    Args:
-        listing_data (dict): The dictionary containing product details.
-        image_bytes (bytes): The raw bytes of the product image.
-        image_mime_type (str): The MIME type of the image (e.g., 'image/png').
+#     Args:
+#         listing_data (dict): The dictionary containing product details.
+#         image_bytes (bytes): The raw bytes of the product image.
+#         image_mime_type (str): The MIME type of the image (e.g., 'image/png').
+#     """
+#     # Create a two-column layout: 1 part for the image, 2 parts for the details
+#     col1, col2 = st.columns([1, 2], gap="large")
+
+#     with col1:
+#         # --- ROBUST IMAGE DISPLAY LOGIC ---
+#         if image_bytes_list and len(image_bytes_list) > 1:
+#             # Case 1: Multiple images found. Display them in tabs.
+#             tabs = st.tabs([f"Image {i+1}" for i in range(len(image_bytes_list))])
+#             for i, tab in enumerate(tabs):
+#                 with tab:
+#                     # Display one image per tab, with NO caption to avoid errors.
+#                     st.image(image_bytes_list[i], use_container_width=True)
+            
+#             # Download All Images as a ZIP file
+#             try:
+#                 zip_buffer = io.BytesIO()
+#                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+#                     product_name_for_file = listing_data.get('product_name', 'product').strip().replace(' ', '_')
+#                     for i, img_bytes in enumerate(image_bytes_list):
+#                         zf.writestr(f"{product_name_for_file}_{i+1}.png", img_bytes)
+                
+#                 st.download_button(
+#                     label="📥 Download All Images (.zip)",
+#                     data=zip_buffer.getvalue(),
+#                     file_name=f"{product_name_for_file}_images.zip",
+#                     mime="application/zip",
+#                     use_container_width=True
+#                 )
+#             except Exception as e:
+#                 st.warning(f"Could not prepare ZIP file: {e}")
+
+#         elif image_bytes_list and len(image_bytes_list) == 1:
+#             # Case 2: Only one image in the list. Display it directly with a caption.
+#             st.image(image_bytes_list[0], use_container_width=True, caption="Final Product Image")
+            
+#             # Download the single image
+#             try:
+#                 product_name_for_file = listing_data.get('product_name', 'product').strip().replace(' ', '_')
+#                 st.download_button(
+#                     label="📥 Download Image",
+#                     data=image_bytes_list[0],
+#                     file_name=f"{product_name_for_file}.png",
+#                     mime="image/png",
+#                     use_container_width=True
+#                 )
+#             except Exception as e:
+#                 st.warning(f"Could not prepare image for download: {e}")
+#         else:
+#             # Case 3: No images available.
+#             st.warning("No images available to display.")
+
+#     with col2:
+#         # --- Product Title with Copy Button ---
+#         # UI TWEAK: Using st.header for a smaller, less bold title than st.title
+#         st.header(listing_data.get('product_name', 'Product Name Not Found'))
+#         st_copy_to_clipboard(listing_data.get('product_name', ''), "📋 Copy Name")
+#         st.markdown("---")
+
+#         # --- Specifications with Copy Button ---
+#         spec_title_col, spec_button_col = st.columns([4, 1])
+#         with spec_title_col:
+#             # UI TWEAK: Using markdown H4 for a smaller subheader
+#             st.markdown("#### Specification")
+        
+#         specs = listing_data.get('specifications', [])
+#         if specs and isinstance(specs, list):
+#             spec_string_to_copy = "\n".join([f"{spec.get('attribute', 'N/A')}: {spec.get('value', 'N/A')}" for spec in specs])
+#             with spec_button_col:
+#                 st_copy_to_clipboard(spec_string_to_copy, "📋 Copy Specs")
+
+#             # Display the specifications in a clean, bordered container
+#             with st.container(border=True):
+#                 for spec in specs:
+#                     spec_col1, spec_col2 = st.columns(2)
+#                     spec_col1.markdown(f"**{spec.get('attribute', 'N/A')}**")
+#                     spec_col2.write(f"{spec.get('value', 'N/A')}")
+#         else:
+#             st.write("No specifications were generated.")
+        
+#         st.write("") # Add some vertical space
+
+#         # --- Description with Copy Button ---
+#         desc_title_col, desc_button_col = st.columns([4, 1])
+#         with desc_title_col:
+#             st.markdown("#### Description") # Using H4 for consistency
+#         with desc_button_col:
+#             st_copy_to_clipboard(listing_data.get('description', ''), "📋 Copy Desc.")
+
+#         st.write(listing_data.get('description', 'No description available.'))
+#         st.markdown("---")
+
+#         # --- Keyword ---
+#         st.markdown("**Primary Keyword:**")
+#         st.code(listing_data.get('primary_keyword', 'N/A'))
+
+def render_product_listing(product_id, listing_data, image_bytes_list, image_mime_type):
     """
-    # Create a two-column layout: 1 part for the image, 2 parts for the details
+    Renders a single product listing, now with an interactive image rotation feature.
+    This version correctly handles both single and multiple image lists.
+    """
+
     col1, col2 = st.columns([1, 2], gap="large")
 
     with col1:
-        # --- ROBUST IMAGE DISPLAY LOGIC ---
-        if image_bytes_list and len(image_bytes_list) > 1:
-            # Case 1: Multiple images found. Display them in tabs.
-            tabs = st.tabs([f"Image {i+1}" for i in range(len(image_bytes_list))])
-            for i, tab in enumerate(tabs):
-                with tab:
-                    # Display one image per tab, with NO caption to avoid errors.
-                    st.image(image_bytes_list[i], use_container_width=True)
+        # --- NEW: Interactive Image Selector and Rotation ---
+        if image_bytes_list:
+            # Determine the currently selected image index
+            # We use a unique key for each product's selector
+            selector_key = f"image_selector_{product_id}"
             
-            # Download All Images as a ZIP file
-            try:
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                    product_name_for_file = listing_data.get('product_name', 'product').strip().replace(' ', '_')
-                    for i, img_bytes in enumerate(image_bytes_list):
-                        zf.writestr(f"{product_name_for_file}_{i+1}.png", img_bytes)
-                
-                st.download_button(
-                    label="📥 Download All Images (.zip)",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"{product_name_for_file}_images.zip",
-                    mime="application/zip",
-                    use_container_width=True
+            # If there's more than one image, show the selector.
+            if len(image_bytes_list) > 1:
+                selected_index = st.radio(
+                    "Select Image View",
+                    options=range(len(image_bytes_list)),
+                    format_func=lambda i: f"Image {i + 1}",
+                    key=selector_key,
+                    horizontal=True,
+                    label_visibility="collapsed"
                 )
-            except Exception as e:
-                st.warning(f"Could not prepare ZIP file: {e}")
+            else:
+                # If there's only one image, the index is always 0.
+                selected_index = 0
 
-        elif image_bytes_list and len(image_bytes_list) == 1:
-            # Case 2: Only one image in the list. Display it directly with a caption.
-            st.image(image_bytes_list[0], use_container_width=True, caption="Final Product Image")
-            
-            # Download the single image
-            try:
-                product_name_for_file = listing_data.get('product_name', 'product').strip().replace(' ', '_')
-                st.download_button(
-                    label="📥 Download Image",
-                    data=image_bytes_list[0],
-                    file_name=f"{product_name_for_file}.png",
-                    mime="image/png",
-                    use_container_width=True
-                )
-            except Exception as e:
-                st.warning(f"Could not prepare image for download: {e}")
+            # Display the currently selected image
+            st.image(image_bytes_list[selected_index], use_container_width=True)
+
+            # Add the Rotate button, which acts on the selected image
+            if st.button("🔄 Rotate Current Image 90°", key=f"rotate_{product_id}", use_container_width=True):
+                try:
+                    current_image_bytes = image_bytes_list[selected_index]
+                    image = Image.open(io.BytesIO(current_image_bytes))
+                    rotated_image = image.rotate(-90, expand=True)
+                    
+                    buffer = io.BytesIO()
+                    rotated_image.save(buffer, format="PNG")
+                    
+                    # Overwrite the old image data in the list with the new rotated data
+                    image_bytes_list[selected_index] = buffer.getvalue()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Could not rotate image: {e}")
+
+            # --- Download Logic (Handles both single and multiple images) ---
+            if len(image_bytes_list) > 1:
+                # Download All as ZIP
+                try:
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                        product_name_for_file = listing_data.get('product_name', 'product').strip().replace(' ', '_')
+                        for i, img_bytes in enumerate(image_bytes_list):
+                            zf.writestr(f"{product_name_for_file}_{i+1}.png", img_bytes)
+                    st.download_button(
+                        label="📥 Download All Images (.zip)",
+                        data=zip_buffer.getvalue(),
+                        file_name=f"{product_name_for_file}_images.zip",
+                        mime="application/zip",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.warning(f"Could not prepare ZIP file: {e}")
+            else:
+                # Download Single Image
+                try:
+                    product_name_for_file = listing_data.get('product_name', 'product').strip().replace(' ', '_')
+                    st.download_button(
+                        label="📥 Download Image",
+                        data=image_bytes_list[0],
+                        file_name=f"{product_name_for_file}.png",
+                        mime="image/png",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.warning(f"Could not prepare image for download: {e}")
         else:
-            # Case 3: No images available.
             st.warning("No images available to display.")
 
     with col2:
-        # --- Product Title with Copy Button ---
-        # UI TWEAK: Using st.header for a smaller, less bold title than st.title
+        # The entire display logic for text content is unchanged and remains correct.
         st.header(listing_data.get('product_name', 'Product Name Not Found'))
-        st_copy_to_clipboard(listing_data.get('product_name', ''), "📋 Copy Name")
+        st_copy_to_clipboard(listing_data.get('product_name', ''), f"copy_name_{product_id}")
         st.markdown("---")
 
-        # --- Specifications with Copy Button ---
         spec_title_col, spec_button_col = st.columns([4, 1])
         with spec_title_col:
-            # UI TWEAK: Using markdown H4 for a smaller subheader
             st.markdown("#### Specification")
         
         specs = listing_data.get('specifications', [])
         if specs and isinstance(specs, list):
             spec_string_to_copy = "\n".join([f"{spec.get('attribute', 'N/A')}: {spec.get('value', 'N/A')}" for spec in specs])
             with spec_button_col:
-                st_copy_to_clipboard(spec_string_to_copy, "📋 Copy Specs")
+                st_copy_to_clipboard(spec_string_to_copy, f"copy_specs_{product_id}")
 
-            # Display the specifications in a clean, bordered container
             with st.container(border=True):
                 for spec in specs:
                     spec_col1, spec_col2 = st.columns(2)
@@ -228,19 +350,17 @@ def render_product_listing(listing_data, image_bytes_list, image_mime_type):
         else:
             st.write("No specifications were generated.")
         
-        st.write("") # Add some vertical space
+        st.write("")
 
-        # --- Description with Copy Button ---
         desc_title_col, desc_button_col = st.columns([4, 1])
         with desc_title_col:
-            st.markdown("#### Description") # Using H4 for consistency
+            st.markdown("#### Description")
         with desc_button_col:
-            st_copy_to_clipboard(listing_data.get('description', ''), "📋 Copy Desc.")
+            st_copy_to_clipboard(listing_data.get('description', ''), f"copy_desc_{product_id}")
 
         st.write(listing_data.get('description', 'No description available.'))
         st.markdown("---")
 
-        # --- Keyword ---
         st.markdown("**Primary Keyword:**")
         st.code(listing_data.get('primary_keyword', 'N/A'))
 
@@ -289,6 +409,24 @@ def invoke_image_model_with_tracking(llm, message):
 
 st.set_page_config(page_title="AI Cataloguing Assistant", layout="wide")
 st.title("🤖 AI Cataloguing Assistant Prototype")
+
+banner_text = "For the best experience, use Chrome. Accessible on iPhone, Android, and desktop/laptop."
+
+# We use the <marquee> HTML tag to create the scrolling effect.
+# Inline CSS is used to style it like a professional banner.
+banner_html = f"""
+    <marquee style="background-color: #E6F3FF; padding: 10px; border-radius: 5px; color: #333; font-family: sans-serif; font-size: 14px;" 
+             scrollamount="4" 
+             behavior="scroll" 
+             direction="left">
+        <b>Notice:</b> {banner_text}
+    </marquee>
+"""
+
+# The st.markdown function renders the HTML. unsafe_allow_html must be True.
+st.markdown(banner_html, unsafe_allow_html=True)
+
+st.write("")
 
 # Initialize session state variables
 if "step" not in st.session_state:
@@ -435,7 +573,6 @@ if st.session_state.step == "identify_products":
             Analyze the provided image carefully and identify all distinct, primary products clearly visible. There shouldn't be any duplicates or variations of the same product.
             Don't leave anything out, only if the product is completely visible and present in the image.
             If same Multiple products are present treat them as single product and return one entry.
-
             For each product, you must determine if a recognizable brand is clearly visible.
             
 
@@ -497,6 +634,18 @@ if st.session_state.step == "identify_products":
             st.session_state.step = "product_not_found_fail"
             st.rerun()
 
+if st.session_state.step == "product_not_found_fail":
+    # Display a specific and clear error message for this failure case.
+    st.error("ERROR: Product Identification Failed")
+    st.warning("The AI could not identify a clear product in the uploaded image.")
+    st.info("Please try again with a different image that clearly shows one or more products.")
+
+    # Provide the button to restart the entire process.
+    if st.button("Upload a New Image", use_container_width=True):
+        # Call the reset function to clear all old data.
+        reset_session_state()
+        # Rerun the app to go back to the initial upload screen.
+        st.rerun()
 
 if st.session_state.step == "confirm_product":
     st.subheader("Visible Products:")
@@ -557,15 +706,27 @@ if st.session_state.step == "confirm_product":
                     st.session_state.step = "extract_selected_product"
                     st.rerun()
 
+        if st.button("🔍 Products Not in This List", use_container_width=True):
+            st.session_state.step = "product_not_listed_fail"
+            st.rerun()
 
-if st.session_state.step == "product_not_found_fail":
-    # Display a specific and clear error message for this failure case.
-    st.error("ERROR: Product Identification Failed")
-    st.warning("The AI could not identify a clear product in the uploaded image.")
-    st.info("Please try again with a different image that clearly shows one or more products.")
+if st.session_state.step == "product_not_listed_fail":
+    
+    # Display the user's requested instructions
+    st.subheader("Instruction: Please upload a clear image of the product.")
+    
+    # Use st.warning or st.info for the guideline to make it stand out
+    st.warning(
+        """
+        **Guideline:** The uploaded image should clearly show the application or use of the product 
+        so the module can contextually identify it.
+        """
+    )
+    
+    st.markdown("---")
 
-    # Provide the button to restart the entire process.
-    if st.button("Upload a New Image", use_container_width=True):
+    # Provide a clear button to go back to the start and try again.
+    if st.button("🔄 Upload a New, Clear Image", use_container_width=True):
         # Call the reset function to clear all old data.
         reset_session_state()
         # Rerun the app to go back to the initial upload screen.
@@ -1119,9 +1280,10 @@ if st.session_state.step == "confirm_single_product_creation":
     product_name = st.session_state.products_to_process[current_index]
     
     render_product_listing(
-        st.session_state.final_listing, 
-        st.session_state.final_image_bytes_list, 
-        st.session_state.image_mime_type
+        product_id="single_product", # A unique string for this case
+        listing_data=st.session_state.final_listing, 
+        image_bytes_list=st.session_state.final_image_bytes_list, 
+        image_mime_type=st.session_state.image_mime_type
     )
     
     st.markdown("---")
@@ -1150,9 +1312,10 @@ if st.session_state.step == "confirm_single_product_creation":
 
 if st.session_state.step == "display_results":
     render_product_listing(
-        st.session_state.final_listing, 
-        st.session_state.final_image_bytes_list, 
-        st.session_state.image_mime_type
+        product_id="single_product", # A unique string for this case
+        listing_data=st.session_state.final_listing, 
+        image_bytes_list=st.session_state.final_image_bytes_list, 
+        image_mime_type=st.session_state.image_mime_type
     )
 
 # --- NEW FINAL PAGE: Display All Generated Products ---
@@ -1163,9 +1326,8 @@ if st.session_state.step == "display_all_results":
     for i, result in enumerate(st.session_state.all_final_listings):
         st.markdown("---")
         render_product_listing(
-            result["listing_data"],
-            result["final_image_bytes_list"],
-            result["image_mime_type"]
+        product_id=i, # The loop index is a perfect unique ID
+        listing_data=result["listing_data"],
+        image_bytes_list=result["final_image_bytes_list"],
+        image_mime_type=result["image_mime_type"]
         )
-
-
