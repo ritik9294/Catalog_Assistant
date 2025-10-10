@@ -558,6 +558,19 @@ if st.session_state.step == "confirm_product":
                     st.rerun()
 
 
+if st.session_state.step == "product_not_found_fail":
+    # Display a specific and clear error message for this failure case.
+    st.error("ERROR: Product Identification Failed")
+    st.warning("The AI could not identify a clear product in the uploaded image.")
+    st.info("Please try again with a different image that clearly shows one or more products.")
+
+    # Provide the button to restart the entire process.
+    if st.button("Upload a New Image", use_container_width=True):
+        # Call the reset function to clear all old data.
+        reset_session_state()
+        # Rerun the app to go back to the initial upload screen.
+        st.rerun()
+
 if st.session_state.step == "extract_selected_product":
 
     if st.session_state.create_all_flow:
@@ -1154,4 +1167,5 @@ if st.session_state.step == "display_all_results":
             result["final_image_bytes_list"],
             result["image_mime_type"]
         )
+
 
