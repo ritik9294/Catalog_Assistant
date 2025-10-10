@@ -419,7 +419,7 @@ banner_html = f"""
              scrollamount="4" 
              behavior="scroll" 
              direction="left">
-        <b>Notice:</b> {banner_text}
+        <b>Note:</b> {banner_text}
     </marquee>
 """
 
@@ -1331,4 +1331,5 @@ if st.session_state.step == "display_all_results":
         image_bytes_list=result["final_image_bytes_list"],
         image_mime_type=result["image_mime_type"]
         )
+
 
