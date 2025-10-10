@@ -415,14 +415,20 @@ banner_text = "For the best experience, use Chrome. Accessible on iPhone, Androi
 # We use the <marquee> HTML tag to create the scrolling effect.
 # Inline CSS is used to style it like a professional banner.
 banner_html = f"""
-    <marquee style="background-color: #E6F3FF; padding: 10px; border-radius: 5px; color: #333; font-family: sans-serif; font-size: 14px;" 
+    <marquee style="background-color: #D9534F; 
+                    padding: 10px; 
+                    border-radius: 5px; 
+                    color: white;
+                    font-family: sans-serif; 
+                    font-size: 14px; 
+                    font-weight: bold; 
+                    text-transform: uppercase;" 
              scrollamount="4" 
              behavior="scroll" 
              direction="left">
         <b>Note:</b> {banner_text}
     </marquee>
 """
-
 # The st.markdown function renders the HTML. unsafe_allow_html must be True.
 st.markdown(banner_html, unsafe_allow_html=True)
 
@@ -1331,6 +1337,7 @@ if st.session_state.step == "display_all_results":
         image_bytes_list=result["final_image_bytes_list"],
         image_mime_type=result["image_mime_type"]
         )
+
 
 
 
